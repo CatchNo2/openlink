@@ -64,6 +64,8 @@ function getSiteConfig(): SiteConfig {
   const h = location.hostname;
   if (h.includes('gemini.google.com'))
     return { editor: 'div.ql-editor[contenteditable="true"]', sendBtn: 'button.send-button[aria-label*="发送"], button.send-button[aria-label*="Send"]', stopBtn: null, fillMethod: 'execCommand', useObserver: true, responseSelector: 'model-response, .model-response-text, message-content' };
+  if (h.includes('deepseek.com'))
+    return { editor: 'textarea[name="search"]', sendBtn: '.bf38813a .ds-button--primary.ds-button--filled', stopBtn: null, fillMethod: 'value', useObserver: true, responseSelector: '.ds-message' };
   // Default: AI Studio
   return { editor: 'textarea[placeholder*="Start typing a prompt"]', sendBtn: 'button.ctrl-enter-submits.ms-button-primary[type="submit"], button[aria-label*="Run"]', stopBtn: null, fillMethod: 'value', useObserver: true, responseSelector: 'ms-chat-turn' };
 }
@@ -116,7 +118,7 @@ function hashStr(s: string): number {
 }
 
 function getConversationId(): string {
-  const m = location.pathname.match(/\/chat\/([^/?#]+)/) || location.search.match(/[?&]id=([^&]+)/);
+  const m = location.pathname.match(/\/(?:chat|a\/chat\/s)\/([^/?#]+)/) || location.search.match(/[?&]id=([^&]+)/);
   return m ? m[1] : '__default__';
 }
 
@@ -155,7 +157,7 @@ async function executeToolCallRaw(toolCall: any): Promise<string> {
 
 function renderToolCard(data: any, _full: string, sourceEl: Element, key: string, processed: Set<string>) {
   // Find stable anchor: message-content's parent, which Angular doesn't rebuild
-  const messageContent = sourceEl.closest('message-content') ?? sourceEl.closest('.prose') ?? sourceEl;
+  const messageContent = sourceEl.closest('.ds-message') ?? sourceEl.closest('message-content') ?? sourceEl.closest('.prose') ?? sourceEl;
   const anchor = messageContent.parentElement ?? sourceEl.parentElement;
   if (!anchor) return;
 
@@ -283,6 +285,7 @@ function startDOMObserver(_responseSelector: string) {
       const tag = el.tagName.toLowerCase();
       if (tag === 'message-content') return el;
       if (tag === 'ms-chat-turn') return el;
+      if (el.classList?.contains('ds-message')) return el;
       el = el.parentElement;
     }
     return null;
@@ -362,7 +365,7 @@ function startDOMObserver(_responseSelector: string) {
 
   // Initial scan for already-rendered tool calls (e.g. after page refresh)
   requestAnimationFrame(() => {
-    document.querySelectorAll('message-content, ms-chat-turn').forEach(el => {
+    document.querySelectorAll('message-content, ms-chat-turn, .ds-message').forEach(el => {
       scanText(getCleanText(el), el);
     });
   });
