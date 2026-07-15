@@ -61,6 +61,11 @@ func (t *WriteFileTool) Execute(ctx *Context) *Result {
 		return result
 	}
 
+	// 审查快照：写入前捕获
+	if ctx.Config.Review != nil {
+		ctx.Config.Review.Snapshot(safePath)
+	}
+
 	if mode == "append" {
 		if err := os.MkdirAll(filepath.Dir(safePath), 0755); err != nil {
 			result.Status = "error"
@@ -90,6 +95,11 @@ func (t *WriteFileTool) Execute(ctx *Context) *Result {
 			result.Error = err.Error()
 			return result
 		}
+	}
+
+	// 审查记录：写入成功后
+	if ctx.Config.Review != nil {
+		ctx.Config.Review.RecordChange(safePath)
 	}
 
 	result.Status = "success"

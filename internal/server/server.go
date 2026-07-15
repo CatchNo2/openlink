@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/afumu/openlink/internal/executor"
+	"github.com/afumu/openlink/internal/review"
 	"github.com/afumu/openlink/internal/security"
 	"github.com/afumu/openlink/internal/skill"
 	"github.com/afumu/openlink/internal/types"
@@ -29,6 +30,9 @@ type Server struct {
 func New(config *types.Config) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
+
+	// 初始化审查管理器
+	config.Review = review.NewManager()
 
 	s := &Server{
 		config:   config,
@@ -62,6 +66,11 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/prompt", s.handlePrompt)
 	s.router.GET("/skills", s.handleListSkills)
 	s.router.GET("/files", s.handleListFiles)
+	s.router.GET("/review", s.handleReview)
+	s.router.POST("/review/undo", s.handleUndo)
+	s.router.POST("/review/keep", s.handleKeep)
+
+	s.setupEvolutionRoutes()
 }
 
 func (s *Server) handleHealth(c *gin.Context) {
@@ -170,6 +179,7 @@ func (s *Server) handleExec(c *gin.Context) {
 }
 
 func (s *Server) Run() error {
+	s.startEvolutionDaemons()
 	return s.router.Run(fmt.Sprintf("127.0.0.1:%d", s.config.Port))
 }
 
@@ -246,4 +256,47 @@ func (s *Server) handleListFiles(c *gin.Context) {
 		return nil
 	})
 	c.JSON(http.StatusOK, gin.H{"files": files})
+}
+
+func (s *Server) handleReview(c *gin.Context) {
+	if s.config.Review == nil {
+		c.JSON(http.StatusOK, gin.H{"changes": nil})
+		return
+	}
+	changes := s.config.Review.Review()
+	c.JSON(http.StatusOK, gin.H{"changes": changes})
+}
+
+func (s *Server) handleUndo(c *gin.Context) {
+	if s.config.Review == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "review not available"})
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req.Path = "" // 空值表示撤回全部
+	}
+	restored, err := s.config.Review.Undo(req.Path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"restored": restored})
+}
+
+func (s *Server) handleKeep(c *gin.Context) {
+	if s.config.Review == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "review not available"})
+		return
+	}
+	var req struct {
+		Paths []string `json:"paths"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req.Paths = nil // 空值表示保留全部
+	}
+	kept := s.config.Review.Keep(req.Paths)
+	c.JSON(http.StatusOK, gin.H{"kept": kept})
 }

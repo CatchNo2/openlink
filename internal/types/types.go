@@ -34,6 +34,16 @@ type ToolResponse struct {
 	Output     string `json:"output"`
 	Error      string `json:"error,omitempty"`
 	StopStream bool   `json:"stopStream,omitempty"`
+	HasReview  bool   `json:"hasReview,omitempty"`
+}
+
+type ReviewManager interface {
+	Snapshot(path string)
+	RecordChange(path string)
+	Review() []map[string]interface{}
+	HasSession() bool
+	Undo(path string) ([]string, error)
+	Keep(paths []string) []string
 }
 
 type Config struct {
@@ -42,6 +52,7 @@ type Config struct {
 	Timeout       int
 	Token         string
 	DefaultPrompt []byte
+	Review        ReviewManager
 }
 
 type Settings struct {

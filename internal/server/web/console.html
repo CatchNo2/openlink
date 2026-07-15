@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OpenLink 自进化控制台</title>
+<style>
+  :root { --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --fg:#e6e9ef; --muted:#8b93a3; --accent:#4f8cff; --green:#3ecf8e; --red:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; font-size:14px; }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; }
+  header h1 { font-size:18px; margin:0; }
+  .wrap { max-width:1080px; margin:0 auto; padding:24px; display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .card h2 { margin:0 0 14px; font-size:15px; }
+  .full { grid-column:1 / -1; }
+  label { display:block; margin:10px 0 4px; color:var(--muted); font-size:12px; }
+  input[type=text], input[type=number], input[type=password] { width:100%; padding:8px 10px; background:#0c0e12; border:1px solid var(--line); border-radius:8px; color:var(--fg); }
+  .row { display:flex; gap:10px; }
+  .row > div { flex:1; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 14px; cursor:pointer; font-size:13px; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  button.green { background:var(--green); }
+  .switch { position:relative; display:inline-block; width:44px; height:24px; }
+  .switch input { display:none; }
+  .slider { position:absolute; inset:0; background:#333; border-radius:24px; transition:.2s; }
+  .slider:before { content:""; position:absolute; height:18px; width:18px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s; }
+  .switch input:checked + .slider { background:var(--green); }
+  .switch input:checked + .slider:before { transform:translateX(20px); }
+  .stat { display:flex; gap:18px; flex-wrap:wrap; color:var(--muted); }
+  .stat b { color:var(--fg); }
+  pre { background:#0c0e12; border:1px solid var(--line); border-radius:8px; padding:12px; max-height:280px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; background:#222; color:var(--muted); }
+  .badge.ok { background:rgba(62,207,142,.15); color:var(--green); }
+  .rec { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .rec .t { color:var(--muted); font-size:12px; }
+  .note { border-left:3px solid var(--accent); padding:8px 12px; margin-bottom:10px; background:#0c0e12; border-radius:0 8px 8px 0; }
+  .hint { color:var(--muted); font-size:12px; line-height:1.6; }
+  .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--green); color:#06281c; padding:10px 18px; border-radius:8px; opacity:0; transition:.3s; pointer-events:none; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 OpenLink 自进化控制台</h1>
+  <div id="tokenBox" class="hint"></div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h2>自进化开关与配置</h2>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <label class="switch"><input type="checkbox" id="enabled"><span class="slider"></span></label>
+      <span id="enabledLabel" class="hint">关闭</span>
+    </div>
+    <div class="row">
+      <div><label>空闲触发时间（分钟）</label><input type="number" id="idle" min="1"></div>
+      <div><label>复盘所需最少轮次</label><input type="number" id="rounds" min="1"></div>
+    </div>
+    <label>每日梦境整理时间 (HH:MM)</label>
+    <input type="text" id="dream" placeholder="23:55">
+    <div style="margin-top:16px;display:flex;gap:10px;">
+      <button onclick="save()">保存配置</button>
+      <button class="ghost" onclick="loadAll()">刷新</button>
+    </div>
+    <div class="stat" style="margin-top:14px;">
+      <span>当前会话轮次: <b id="roundsNow">-</b></span>
+      <span>空闲(秒): <b id="idleNow">-</b></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>手动触发</h2>
+    <div class="hint" style="margin-bottom:12px;">满足条件时系统会自动请求复盘/梦境；也可在此手动触发。复盘与记忆蒸馏的「推理」由网页端 LLM 完成：点击后会返回材料(brief)，请将其粘贴到对话中让 AI 执行，执行完再点击「收尾」。</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="green" onclick="act('review_now')">获取复盘材料</button>
+      <button class="green" onclick="act('dream_now')">获取梦境材料</button>
+      <button class="ghost" onclick="act('enable')">开启自进化</button>
+      <button class="ghost" onclick="act('disable')">关闭自进化</button>
+    </div>
+    <pre id="briefOut" style="margin-top:12px;display:none;"></pre>
+    <h2 style="margin-top:18px;">待处理通知</h2>
+    <div id="notes"></div>
+  </div>
+
+  <div class="card full">
+    <h2>自主进化记录</h2>
+    <div id="log"></div>
+  </div>
+
+  <div class="card full">
+    <h2>记忆速览</h2>
+    <div class="row">
+      <div><label>核心记忆 MEMORY.md</label><pre id="core"></pre></div>
+      <div><label>今日天级记忆</label><pre id="daily"></pre></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+function token() {
+  let t = new URLSearchParams(location.search).get('token');
+  if (t) localStorage.setItem('ol_token', t);
+  return localStorage.getItem('ol_token') || '';
+}
+function auth(h={}) { return Object.assign({'Authorization':'Bearer '+token()}, h); }
+function showToast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+
+async function api(method, url, body){
+  const opt = { method, headers: auth({'Content-Type':'application/json'}) };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(url, opt);
+  return r.json();
+}
+
+async function loadAll(){
+  $('tokenBox').textContent = token() ? 'Token: '+token().slice(0,6)+'…' : '未提供 token（请在 URL 加 ?token=XXX）';
+  try {
+    const cfg = await api('GET','/api/evolution');
+    $('enabled').checked = cfg.evolution.enabled;
+    $('enabledLabel').textContent = cfg.evolution.enabled ? '开启' : '关闭';
+    $('idle').value = cfg.evolution.idle_minutes;
+    $('rounds').value = cfg.evolution.min_rounds;
+    $('dream').value = cfg.evolution.dream_time;
+    const st = cfg.status || {};
+    $('roundsNow').textContent = st.rounds ?? '-';
+    $('idleNow').textContent = st.idle_seconds ?? '-';
+  } catch(e){}
+  loadLog(); loadNotes(); loadMemory();
+}
+
+async function save(){
+  const body = {
+    enabled: $('enabled').checked,
+    idle_minutes: parseInt($('idle').value)||10,
+    min_rounds: parseInt($('rounds').value)||6,
+    dream_time: $('dream').value || '23:55'
+  };
+  await api('POST','/api/evolution', body);
+  showToast('配置已保存');
+  loadAll();
+}
+
+async function act(action){
+  const body = { action };
+  if (action==='dream_now') body.days = 1;
+  const d = await api('POST','/api/evolution/action', body);
+  if ((action==='review_now'||action==='dream_now') && d) {
+    const box = $('briefOut');
+    box.style.display = 'block';
+    box.textContent = JSON.stringify(d, null, 2);
+  }
+  showToast('已触发：'+action);
+  loadAll();
+}
+
+async function loadLog(){
+  try{
+    const d = await api('GET','/api/evolution/log');
+    const box = $('log'); box.innerHTML='';
+    if(!d.records || !d.records.length){ box.innerHTML='<div class="hint">暂无记录</div>'; return; }
+    d.records.forEach(r=>{
+      const div=document.createElement('div'); div.className='rec';
+      const changes = (r.changes||[]).map(c=>c.action+' '+c.path).join('；') || '—';
+      div.innerHTML = `<div><b>${r.type}</b> <span class="badge">${r.time}</span></div><div class="t">${r.summary||''}</div><div class="t">变更：${changes}</div>`;
+      box.appendChild(div);
+    });
+  }catch(e){}
+}
+
+async function loadNotes(){
+  try{
+    const d = await api('GET','/api/evolution/notify');
+    const box=$('notes'); box.innerHTML='';
+    const list=(d.notifications||[]).filter(n=>!n.read);
+    if(!list.length){ box.innerHTML='<div class="hint">无新通知</div>'; return; }
+    list.forEach(n=>{ const d2=document.createElement('div'); d2.className='note'; d2.innerHTML=`<b>${n.title}</b><div class="t">${n.body}</div>`; box.appendChild(d2); });
+    const btn=document.createElement('button'); btn.className='ghost'; btn.textContent='清空通知'; btn.onclick=async()=>{ await api('POST','/api/evolution/notify/clear'); loadNotes(); }; box.appendChild(btn);
+  }catch(e){}
+}
+
+async function loadMemory(){
+  try{
+    const d = await api('GET','/api/memory');
+    $('core').textContent = d.core || '(空)';
+    $('daily').textContent = d.daily || '(空)';
+  }catch(e){}
+}
+
+loadAll();
+</script>
+</body>
+</html>

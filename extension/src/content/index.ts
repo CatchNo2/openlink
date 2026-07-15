@@ -64,6 +64,8 @@ function getSiteConfig(): SiteConfig {
   const h = location.hostname;
   if (h.includes('gemini.google.com'))
     return { editor: 'div.ql-editor[contenteditable="true"]', sendBtn: 'button.send-button[aria-label*="发送"], button.send-button[aria-label*="Send"]', stopBtn: null, fillMethod: 'execCommand', useObserver: true, responseSelector: 'model-response, .model-response-text, message-content' };
+  if (h.includes('deepseek.com'))
+    return { editor: 'textarea[name="search"]', sendBtn: '.bf38813a .ds-button--primary.ds-button--filled', stopBtn: null, fillMethod: 'value', useObserver: true, responseSelector: '.ds-message' };
   // Default: AI Studio
   return { editor: 'textarea[placeholder*="Start typing a prompt"]', sendBtn: 'button.ctrl-enter-submits.ms-button-primary[type="submit"], button[aria-label*="Run"]', stopBtn: null, fillMethod: 'value', useObserver: true, responseSelector: 'ms-chat-turn' };
 }
@@ -107,6 +109,88 @@ if (!(window as any).__OPENLINK_LOADED__) {
   }
   if (document.body) mountInputListener();
   else document.addEventListener('DOMContentLoaded', mountInputListener);
+
+  // ===== 自进化：会话记录与通知 =====
+  function setupSelfEvolution() {
+    const seenNodes = new WeakSet<Element>();
+
+    async function postSessionLog(role: string, content: string) {
+      if (!content || content.length < 2) return;
+      try {
+        const { authToken, apiUrl } = await chrome.storage.local.get(['authToken', 'apiUrl']);
+        if (!apiUrl) return;
+        const headers: any = { 'Content-Type': 'application/json' };
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        await bgFetch(`${apiUrl}/session/log`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ session_id: getConversationId(), role, content: content.slice(0, 4000) })
+        });
+      } catch {}
+    }
+
+    // 用户点击发送时记录 user 轮次（驱动空闲检测与复盘阈值）
+    function onSend() {
+      setTimeout(() => {
+        const el = querySelectorFirst(cfg.editor) as any;
+        const text = el ? (el.value || el.innerText || '').trim() : '';
+        postSessionLog('user', text);
+      }, 300);
+    }
+    function attachSendLogger() {
+      const btn = querySelectorFirst(cfg.sendBtn);
+      if (!btn) {
+        const obs = new MutationObserver(() => {
+          const b = querySelectorFirst(cfg.sendBtn);
+          if (b) { obs.disconnect(); b.addEventListener('click', onSend); }
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+        return;
+      }
+      btn.addEventListener('click', onSend);
+    }
+    attachSendLogger();
+
+    // AI 回复含工具调用时记录 assistant 轮次（按节点去重）
+    (window as any).__openlinkLogAssistant = (el: Element) => {
+      if (!el || seenNodes.has(el)) return;
+      seenNodes.add(el);
+      const text = (el.textContent || '').replace(/<tool[\s\S]*?<\/tool>/g, '').trim();
+      postSessionLog('assistant', text);
+    };
+
+    // 轮询自进化通知并弹窗提示
+    async function pollNotifications() {
+      try {
+        const { authToken, apiUrl } = await chrome.storage.local.get(['authToken', 'apiUrl']);
+        if (!apiUrl) return;
+        const headers: any = {};
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        const resp = await bgFetch(`${apiUrl}/api/evolution/notify`, { headers });
+        if (!resp.ok) return;
+        const data = JSON.parse(resp.body);
+        const notes = (data.notifications || []).filter((n: any) => !n.read);
+        if (notes.length) showNotification(notes[0]);
+      } catch {}
+    }
+    function showNotification(n: any) {
+      const id = 'ol-notify-' + n.id;
+      if (document.getElementById(id)) return;
+      const div = document.createElement('div');
+      div.id = id;
+      div.style.cssText = 'position:fixed;right:16px;bottom:16px;max-width:320px;background:#1e1e2e;color:#cdd6f4;border:1px solid #89b4fa;border-radius:10px;padding:12px;font-size:13px;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,.4)';
+      div.innerHTML = `<b>🧠 ${n.title}</b><div style="margin-top:6px;white-space:pre-wrap"></div>`;
+      (div.lastChild as HTMLElement).textContent = n.body;
+      const close = document.createElement('div');
+      close.textContent = '知道了';
+      close.style.cssText = 'margin-top:8px;text-align:right;color:#89b4fa;cursor:pointer;font-size:12px';
+      close.onclick = () => div.remove();
+      div.appendChild(close);
+      document.body.appendChild(div);
+    }
+    setInterval(pollNotifications, 30000);
+  }
+
+  setupSelfEvolution();
 }
 
 function hashStr(s: string): number {
@@ -116,7 +200,7 @@ function hashStr(s: string): number {
 }
 
 function getConversationId(): string {
-  const m = location.pathname.match(/\/chat\/([^/?#]+)/) || location.search.match(/[?&]id=([^&]+)/);
+  const m = location.pathname.match(/\/(?:chat|a\/chat\/s)\/([^/?#]+)/) || location.search.match(/[?&]id=([^&]+)/);
   return m ? m[1] : '__default__';
 }
 
@@ -155,7 +239,7 @@ async function executeToolCallRaw(toolCall: any): Promise<string> {
 
 function renderToolCard(data: any, _full: string, sourceEl: Element, key: string, processed: Set<string>) {
   // Find stable anchor: message-content's parent, which Angular doesn't rebuild
-  const messageContent = sourceEl.closest('message-content') ?? sourceEl.closest('.prose') ?? sourceEl;
+  const messageContent = sourceEl.closest('.ds-message') ?? sourceEl.closest('message-content') ?? sourceEl.closest('.prose') ?? sourceEl;
   const anchor = messageContent.parentElement ?? sourceEl.parentElement;
   if (!anchor) return;
 
@@ -251,6 +335,8 @@ function startDOMObserver(_responseSelector: string) {
       if (sourceEl) {
         processed.add(key);
         renderToolCard(data, full, sourceEl, key, processed);
+        const logFn = (window as any).__openlinkLogAssistant;
+        if (typeof logFn === 'function') logFn(sourceEl);
         if (autoExecute && !isExecuted(key)) {
           markExecuted(key);
           window.postMessage({ type: 'TOOL_CALL', data }, '*');
@@ -283,6 +369,7 @@ function startDOMObserver(_responseSelector: string) {
       const tag = el.tagName.toLowerCase();
       if (tag === 'message-content') return el;
       if (tag === 'ms-chat-turn') return el;
+      if (el.classList?.contains('ds-message')) return el;
       el = el.parentElement;
     }
     return null;
@@ -362,7 +449,7 @@ function startDOMObserver(_responseSelector: string) {
 
   // Initial scan for already-rendered tool calls (e.g. after page refresh)
   requestAnimationFrame(() => {
-    document.querySelectorAll('message-content, ms-chat-turn').forEach(el => {
+    document.querySelectorAll('message-content, ms-chat-turn, .ds-message').forEach(el => {
       scanText(getCleanText(el), el);
     });
   });
@@ -474,8 +561,17 @@ async function executeToolCall(toolCall: any) {
       clickStopButton();
       showToast('✅ 文件已写入成功，已停止生成');
       await new Promise(r => setTimeout(r, 600));
+      // 如果有文件变更，显示审查面板
+      if (result.hasReview) {
+        await showReviewPanel();
+      }
       fillAndSend(text, true);
       return;
+    }
+
+    // 即使没有 stopStream，如果有文件变更也显示审查
+    if (result.hasReview) {
+      await showReviewPanel();
     }
 
     fillAndSend(text, true);
@@ -519,6 +615,127 @@ function showCountdownToast(ms: number, onFire: () => void): void {
     if (remaining <= 0) { clearInterval(interval); toast.remove(); if (!cancelled) onFire(); }
   }, 1000);
   cancelBtn.onclick = () => { cancelled = true; clearInterval(interval); toast.remove(); };
+}
+
+async function showReviewPanel(): Promise<void> {
+  const { authToken, apiUrl } = await chrome.storage.local.get(['authToken', 'apiUrl']);
+  if (!apiUrl) return;
+  const headers: any = { 'Content-Type': 'application/json' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+  const resp = await bgFetch(`${apiUrl}/review`, { headers });
+  if (!resp.ok) return;
+  const data = JSON.parse(resp.body);
+  const changes: Array<{ path: string; action: string }> = data.changes;
+  if (!changes || changes.length === 0) return;
+
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center';
+    const panel = document.createElement('div');
+    panel.style.cssText = 'background:#1e1e2e;color:#cdd6f4;border-radius:12px;padding:24px;max-width:560px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);max-height:80vh;display:flex;flex-direction:column';
+
+    const title = document.createElement('h3');
+    title.style.cssText = 'margin:0 0 16px;font-size:16px;font-weight:600';
+    title.textContent = `📝 文件变更审查 (${changes.length} 个文件)`;
+    panel.appendChild(title);
+
+    const fileList = document.createElement('div');
+    fileList.style.cssText = 'overflow-y:auto;flex:1;margin-bottom:16px';
+    const actionColors: Record<string, string> = { created: '#a6e3a1', modified: '#89b4fa', deleted: '#f38ba8' };
+    const actionLabels: Record<string, string> = { created: '新建', modified: '修改', deleted: '删除' };
+    const checkStates: boolean[] = changes.map(() => true);
+
+    changes.forEach((ch, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:4px;background:#181825';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.style.cssText = 'accent-color:#89b4fa;cursor:pointer';
+      cb.onchange = () => { checkStates[i] = cb.checked; };
+      const badge = document.createElement('span');
+      badge.style.cssText = `font-size:11px;padding:2px 6px;border-radius:4px;background:${actionColors[ch.action] || '#89b4fa'}22;color:${actionColors[ch.action] || '#89b4fa'}`;
+      badge.textContent = actionLabels[ch.action] || ch.action;
+      const path = document.createElement('span');
+      path.style.cssText = 'font-size:12px;font-family:monospace;color:#cdd6f4;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      path.textContent = ch.path;
+      path.title = ch.path;
+      row.appendChild(cb);
+      row.appendChild(badge);
+      row.appendChild(path);
+      fileList.appendChild(row);
+    });
+    panel.appendChild(fileList);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:10px;justify-content:flex-end';
+    const keepAllBtn = document.createElement('button');
+    keepAllBtn.textContent = '全部保留';
+    keepAllBtn.style.cssText = 'padding:8px 18px;background:#a6e3a1;color:#1e1e2e;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600';
+    const keepSelectedBtn = document.createElement('button');
+    keepSelectedBtn.textContent = '保留选中';
+    keepSelectedBtn.style.cssText = 'padding:8px 18px;background:#313244;color:#89b4fa;border:1px solid #89b4fa;border-radius:8px;cursor:pointer;font-size:13px';
+    const undoSelectedBtn = document.createElement('button');
+    undoSelectedBtn.textContent = '撤回选中';
+    undoSelectedBtn.style.cssText = 'padding:8px 18px;background:#313244;color:#f38ba8;border:1px solid #f38ba8;border-radius:8px;cursor:pointer;font-size:13px';
+    const undoAllBtn = document.createElement('button');
+    undoAllBtn.textContent = '全部撤回';
+    undoAllBtn.style.cssText = 'padding:8px 18px;background:#f38ba8;color:#1e1e2e;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600';
+    btnRow.appendChild(undoAllBtn);
+    btnRow.appendChild(undoSelectedBtn);
+    btnRow.appendChild(keepSelectedBtn);
+    btnRow.appendChild(keepAllBtn);
+    panel.appendChild(btnRow);
+
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    const close = () => { overlay.remove(); resolve(); };
+
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+    keepAllBtn.onclick = async () => {
+      keepAllBtn.disabled = true; keepAllBtn.textContent = '保留中...';
+      await bgFetch(`${apiUrl}/review/keep`, { method: 'POST', headers, body: JSON.stringify({}) });
+      showToast('✅ 已保留所有变更');
+      close();
+    };
+
+    keepSelectedBtn.onclick = async () => {
+      const paths = changes.filter((_, i) => checkStates[i]).map(c => c.path);
+      if (paths.length === 0) { showToast('请至少选择一个文件'); return; }
+      keepSelectedBtn.disabled = true; keepSelectedBtn.textContent = '保留中...';
+      await bgFetch(`${apiUrl}/review/keep`, { method: 'POST', headers, body: JSON.stringify({ paths }) });
+      // 撤回未选中的
+      const undoPaths = changes.filter((_, i) => !checkStates[i]).map(c => c.path);
+      if (undoPaths.length > 0) {
+        for (const p of undoPaths) {
+          await bgFetch(`${apiUrl}/review/undo`, { method: 'POST', headers, body: JSON.stringify({ path: p }) });
+        }
+      }
+      showToast(`✅ 已保留 ${paths.length} 个文件`);
+      close();
+    };
+
+    undoSelectedBtn.onclick = async () => {
+      const paths = changes.filter((_, i) => checkStates[i]).map(c => c.path);
+      if (paths.length === 0) { showToast('请至少选择一个文件'); return; }
+      undoSelectedBtn.disabled = true; undoSelectedBtn.textContent = '撤回中...';
+      for (const p of paths) {
+        await bgFetch(`${apiUrl}/review/undo`, { method: 'POST', headers, body: JSON.stringify({ path: p }) });
+      }
+      showToast(`↩️ 已撤回 ${paths.length} 个文件`);
+      close();
+    };
+
+    undoAllBtn.onclick = async () => {
+      undoAllBtn.disabled = true; undoAllBtn.textContent = '撤回中...';
+      await bgFetch(`${apiUrl}/review/undo`, { method: 'POST', headers, body: JSON.stringify({}) });
+      showToast('↩️ 已撤回所有变更');
+      close();
+    };
+  });
 }
 
 function querySelectorFirst(selectors: string): HTMLElement | null {

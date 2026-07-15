@@ -35,6 +35,15 @@ func New(config *types.Config) *Executor {
 	e.registry.Register(tool.NewQuestionTool())
 	e.registry.Register(tool.NewSkillTool(config))
 	e.registry.Register(tool.NewTodoWriteTool(config))
+	// 自进化相关工具
+	e.registry.Register(tool.NewMemoryWriteTool(config))
+	e.registry.Register(tool.NewMemoryReadTool(config))
+	e.registry.Register(tool.NewKnowledgeWriteTool(config))
+	e.registry.Register(tool.NewKnowledgeReadTool(config))
+	e.registry.Register(tool.NewPromptUpdateTool(config))
+	e.registry.Register(tool.NewContextSummarizeTool(config))
+	e.registry.Register(tool.NewSessionLogTool(config))
+	e.registry.Register(tool.NewEvolutionControlTool(config))
 	return e
 }
 
@@ -72,6 +81,12 @@ func (e *Executor) Execute(ctx context.Context, req *types.ToolRequest) *types.T
 		Error:      result.Error,
 		StopStream: result.StopStream,
 	}
+
+	// 如果有未审查的文件变更，标记 hasReview
+	if e.config.Review != nil && e.config.Review.HasSession() {
+		resp.HasReview = true
+	}
+
 	if result.Status == "error" && result.Output == "" {
 		resp.Output = result.Error
 	}

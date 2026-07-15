@@ -6,8 +6,12 @@ import (
 	"log"
 	"os"
 
+	appconfig "github.com/afumu/openlink/internal/config"
+	"github.com/afumu/openlink/internal/evolution"
+	"github.com/afumu/openlink/internal/memory"
 	"github.com/afumu/openlink/internal/security"
 	"github.com/afumu/openlink/internal/server"
+	"github.com/afumu/openlink/internal/session"
 	"github.com/afumu/openlink/internal/types"
 	"github.com/afumu/openlink/prompts"
 )
@@ -35,7 +39,14 @@ func main() {
 		DefaultPrompt: prompts.DefaultPrompt,
 	}
 
+	// 初始化自进化相关子系统
+	appconfig.Load(*dir)
+	memory.Init(*dir)
+	session.Init(*dir)
+	evolution.Init(*dir)
+
 	fmt.Printf("\n认证 URL: http://127.0.0.1:%d/auth?token=%s\n", *port, token)
+	fmt.Printf("控制台:   http://127.0.0.1:%d/console?token=%s\n", *port, token)
 	fmt.Printf("请在浏览器扩展中输入此 URL\n\n")
 
 	srv := server.New(config)

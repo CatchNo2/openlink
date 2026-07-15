@@ -13,16 +13,21 @@ openlink/
 ├── cmd/server/          # 服务端入口
 ├── internal/
 │   ├── executor/        # 工具执行器
+│   ├── review/          # 文件变更审查管理器
 │   ├── security/        # 沙箱与 Token
 │   ├── server/          # HTTP 服务
+│   ├── skill/           # 技能加载器
+│   ├── tool/            # 各工具实现
 │   └── types/           # 公共类型
 ├── prompts/             # 内置初始化提示词
 ├── extension/           # Chrome 扩展（Vite + React）
 │   ├── src/
-│   │   ├── content/     # 内容脚本（工具调用拦截）
+│   │   ├── content/     # 内容脚本（工具调用拦截 + 审查面板）
 │   │   ├── popup/       # 扩展弹窗 UI
-│   │   └── background/  # Service Worker
+│   │   ├── background/  # Service Worker
+│   │   └── injected/    # 注入页面的脚本
 │   └── public/          # manifest.json 等静态资源
+├── local-skills-server.js # 本地技能扫描服务器
 ├── install.sh           # Linux/macOS 安装脚本
 ├── install.ps1          # Windows 安装脚本
 └── .goreleaser.yml      # 多平台发布配置

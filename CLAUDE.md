@@ -111,6 +111,18 @@ Local Filesystem
 **internal/skill/**: Skills loader
 - `LoadInfos(rootDir)`: Scans multiple directories for SKILL.md files, returns name+description list
 
+**internal/config/**: Runtime config (evolution only) loaded from `~/.openlink/config.json` or `<rootDir>/.openlink/config.json`; `config.Load(rootDir)`, `config.Get()`, `config.Update(patch)`. No LLM config — the LLM runs in the web page, not on the server.
+
+**internal/memory/**: Singleton store for `MEMORY.md` (core), `memory/YYYY-MM-DD.md` (daily, hash-dedup), `knowledge/<topic>.md`, and `AGENT.md/USER.md/RULE.md`. `memory.Init(rootDir)`, `memory.Get()`.
+
+**internal/session/**: Singleton store logging per-session turns (user/assistant) for idle detection & review; `session.Init(rootDir)`, `session.Get().LogTurn(...)`.
+
+**internal/evolution/**: Self-evolution engine — **web-AI-driven** (the server never calls an LLM). `MaybeReview()` (idle scheduler → `RequestReview()`), `RequestReview()`/`RequestDream()` (set pending + notify), `BeginReview()`/`BeginDream()` (snapshot + return brief for the web LLM), `FinishReview(summary)`/`FinishDream(summary)` (diff snapshot → change-log + notify). Change-log & notifications via `evolution.Log()`; backup/rollback via `evolution.Init(rootDir)`, `evolution.Get()`.
+
+**internal/tool/**: New self-evolution tools registered in `executor.New` — `memory_write`, `memory_read`, `knowledge_write`, `knowledge_read`, `prompt_update`, `context_summarize`, `session_log`, `evolution_control`.
+
+**internal/server/evolution_routes.go**: Web console (`/console`) + APIs (`/api/evolution`, `/api/evolution/log`, `/api/evolution/notify`, `/api/evolution/action`, `/api/memory`) and idle/dream daemons started in `Run()`.
+
 **internal/server/server.go**: HTTP API (Gin framework)
 - `GET /health`: Server status and version
 - `GET /config`: Current configuration
