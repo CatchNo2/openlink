@@ -52,14 +52,14 @@ func (t *PromptUpdateTool) Execute(ctx *Context) *Result {
 		rel = "RULE.md"
 	}
 	path := filepath.Join(ctx.Config.RootDir, rel)
-	t.config.Review.Snapshot(path)
+	t.config.Review.Snapshot(path, "prompt_update")
 	if err := memory.Get().UpdatePrompt(file, content); err != nil {
 		r.Status = "error"
 		r.Error = err.Error()
 		r.EndTime = time.Now()
 		return r
 	}
-	t.config.Review.RecordChange(path)
+	t.config.Review.RecordChange(path, "prompt_update")
 	r.Status = "success"
 	r.Output = fmt.Sprintf("已更新 %s", rel)
 	r.EndTime = time.Now()

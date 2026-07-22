@@ -44,14 +44,14 @@ func (t *KnowledgeWriteTool) Execute(ctx *Context) *Result {
 	content := toStr(ctx.Args["content"])
 	rel := filepath.Join("knowledge", sanitizeTopic(topic)+".md")
 	path := filepath.Join(ctx.Config.RootDir, rel)
-	t.config.Review.Snapshot(path)
+	t.config.Review.Snapshot(path, "knowledge_write")
 	if err := memory.Get().WriteKnowledge(topic, content); err != nil {
 		r.Status = "error"
 		r.Error = err.Error()
 		r.EndTime = time.Now()
 		return r
 	}
-	t.config.Review.RecordChange(path)
+	t.config.Review.RecordChange(path, "knowledge_write")
 	r.Status = "success"
 	r.Output = fmt.Sprintf("已写入知识库：%s", rel)
 	r.EndTime = time.Now()

@@ -50,14 +50,14 @@ func (t *MemoryWriteTool) Execute(ctx *Context) *Result {
 	var err error
 	if mtype == "core" {
 		path = filepath.Join(ctx.Config.RootDir, "MEMORY.md")
-		t.config.Review.Snapshot(path)
+		t.config.Review.Snapshot(path, "memory_write")
 		written, err = memory.Get().AppendCore(content)
 	} else {
 		if date == "" {
 			date = time.Now().Format("2006-01-02")
 		}
 		path = filepath.Join(ctx.Config.RootDir, "memory", date+".md")
-		t.config.Review.Snapshot(path)
+		t.config.Review.Snapshot(path, "memory_write")
 		written, err = memory.Get().AppendDaily(date, content)
 	}
 	if err != nil {
@@ -66,7 +66,7 @@ func (t *MemoryWriteTool) Execute(ctx *Context) *Result {
 		r.EndTime = time.Now()
 		return r
 	}
-	t.config.Review.RecordChange(path)
+	t.config.Review.RecordChange(path, "memory_write")
 	if written {
 		r.Status = "success"
 		r.Output = fmt.Sprintf("已写入%s记忆。", zhType(mtype))

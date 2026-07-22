@@ -63,7 +63,7 @@ func (t *WriteFileTool) Execute(ctx *Context) *Result {
 
 	// 审查快照：写入前捕获
 	if ctx.Config.Review != nil {
-		ctx.Config.Review.Snapshot(safePath)
+		ctx.Config.Review.Snapshot(safePath, "write_file")
 	}
 
 	if mode == "append" {
@@ -99,7 +99,7 @@ func (t *WriteFileTool) Execute(ctx *Context) *Result {
 
 	// 审查记录：写入成功后
 	if ctx.Config.Review != nil {
-		ctx.Config.Review.RecordChange(safePath)
+		ctx.Config.Review.RecordChange(safePath, "write_file")
 	}
 
 	result.Status = "success"

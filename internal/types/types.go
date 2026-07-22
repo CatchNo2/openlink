@@ -38,8 +38,8 @@ type ToolResponse struct {
 }
 
 type ReviewManager interface {
-	Snapshot(path string)
-	RecordChange(path string)
+	Snapshot(path, source string)
+	RecordChange(path, source string)
 	Review() []map[string]interface{}
 	HasSession() bool
 	Undo(path string) ([]string, error)

@@ -68,7 +68,7 @@ func (t *EditTool) Execute(ctx *Context) *Result {
 
 	// 审查快照：编辑前捕获
 	if ctx.Config.Review != nil {
-		ctx.Config.Review.Snapshot(safePath)
+		ctx.Config.Review.Snapshot(safePath, "edit")
 	}
 
 	rawContent, err := os.ReadFile(safePath)
@@ -95,7 +95,7 @@ func (t *EditTool) Execute(ctx *Context) *Result {
 
 	// 审查记录：编辑成功后
 	if ctx.Config.Review != nil {
-		ctx.Config.Review.RecordChange(safePath)
+		ctx.Config.Review.RecordChange(safePath, "edit")
 	}
 
 	result.Status = "success"

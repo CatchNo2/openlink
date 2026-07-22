@@ -84,6 +84,17 @@
   </div>
 
   <div class="card full">
+    <h2>文件变更审查 <span id="reviewCount" class="badge"></span></h2>
+    <div class="hint" style="margin-bottom:12px;">Agent 修改过的文件会在此等待你确认。可展开查看具体差异，或逐条 / 全部撤销、保留。</div>
+    <div id="reviewList"></div>
+    <div style="display:flex;gap:10px;margin-top:12px;">
+      <button class="ghost" onclick="undoAll()">全部撤销</button>
+      <button class="green" onclick="keepAll()">全部保留</button>
+      <button class="ghost" onclick="loadReview()">刷新</button>
+    </div>
+  </div>
+
+  <div class="card full">
     <h2>自主进化记录</h2>
     <div id="log"></div>
   </div>
@@ -129,8 +140,54 @@ async function loadAll(){
     $('roundsNow').textContent = st.rounds ?? '-';
     $('idleNow').textContent = st.idle_seconds ?? '-';
   } catch(e){}
-  loadLog(); loadNotes(); loadMemory();
+  loadLog(); loadNotes(); loadMemory(); loadReview();
 }
+
+async function loadReview(){
+  try{
+    const d = await api('GET','/review');
+    const box = $('reviewList'); box.innerHTML='';
+    const changes = d.changes || [];
+    $('reviewCount').textContent = changes.length ? changes.length+' 项待确认' : '';
+    if(!changes.length){ box.innerHTML='<div class="hint">暂无待审查的变更</div>'; return; }
+    changes.forEach((c,idx)=>{
+      const icon = c.action==='created' ? '＋' : (c.action==='deleted' ? '－' : '✎');
+      const color = c.action==='created' ? 'var(--green)' : (c.action==='deleted' ? 'var(--red)' : 'var(--accent)');
+      let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="color:${color};font-weight:600;">${icon}</span>
+        <span style="font-family:monospace;">${c.path}</span>
+        <span class="badge">${c.source||'—'}</span>
+        <span class="t">${c.time||''}</span>
+        <span style="margin-left:auto;display:flex;gap:6px;">
+          ${c.hasDiff ? `<button class="ghost" onclick="toggleDiff(${idx})">查看差异</button>` : ''}
+          <button class="ghost" onclick="undoOne('${encodeURIComponent(c.path)}')">撤销</button>
+          <button class="ghost" onclick="keepOne('${encodeURIComponent(c.path)}')">保留</button>
+        </span>
+      </div>`;
+      if(c.hasDiff && c.diff){
+        html += `<div id="diff-${idx}" style="display:none;margin-top:10px;"><pre>${renderDiff(c.diff)}</pre></div>`;
+      }
+      const div=document.createElement('div'); div.className='rec'; div.innerHTML=html;
+      box.appendChild(div);
+    });
+  }catch(e){}
+}
+
+function renderDiff(lines){
+  return (lines||[]).map(l=>{
+    const mark = l.type==='add' ? '+' : (l.type==='del' ? '-' : ' ');
+    const col = l.type==='add' ? 'var(--green)' : (l.type==='del' ? 'var(--red)' : 'var(--muted)');
+    const safe = (l.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<span style="color:${col};">${mark} ${safe}</span>`;
+  }).join('\n');
+}
+
+function toggleDiff(idx){ const el=$('diff-'+idx); if(el) el.style.display = el.style.display==='none' ? 'block' : 'none'; }
+
+async function undoAll(){ await api('POST','/review/undo',{}); showToast('已撤销全部变更'); loadReview(); loadLog(); }
+async function keepAll(){ await api('POST','/review/keep',{}); showToast('已保留全部变更'); loadReview(); loadLog(); }
+async function undoOne(p){ await api('POST','/review/undo',{path:decodeURIComponent(p)}); showToast('已撤销'); loadReview(); loadLog(); }
+async function keepOne(p){ await api('POST','/review/keep',{paths:[decodeURIComponent(p)]}); showToast('已保留'); loadReview(); loadLog(); }
 
 async function save(){
   const body = {

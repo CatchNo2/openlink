@@ -62,6 +62,12 @@ func AuthMiddleware(token string) gin.HandlerFunc {
 		}
 
 		auth := c.GetHeader("Authorization")
+		if auth == "" {
+			// 兼容浏览器直接访问 /console?token=xxx（页面首次加载尚无 Authorization 头）
+			if q := c.Query("token"); q != "" {
+				auth = "Bearer " + q
+			}
+		}
 		expected := "Bearer " + token
 		if len(auth) != len(expected) || subtle.ConstantTimeCompare([]byte(auth), []byte(expected)) != 1 {
 			c.JSON(401, gin.H{"error": "unauthorized"})

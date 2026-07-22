@@ -3,8 +3,13 @@ package review
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
+	"time"
 )
+
+// 超过此行数则跳过 diff 计算，避免大文件拖垮内存
+const maxDiffLines = 10000
 
 // FileSnapshot 文件修改前的快照
 type FileSnapshot struct {
@@ -14,11 +19,20 @@ type FileSnapshot struct {
 	Mode    os.FileMode `json:"-"`
 }
 
+// DiffLine 单行差异
+type DiffLine struct {
+	Type string `json:"type"` // add / del / ctx
+	Text string `json:"text"`
+}
+
 // FileChange 文件变更记录
 type FileChange struct {
-	Path        string `json:"path"`
-	Action      string `json:"action"` // created / modified / deleted
-	HasSnapshot bool   `json:"hasSnapshot"`
+	Path    string    `json:"path"`
+	Action  string    `json:"action"` // created / modified / deleted
+	Source  string    `json:"source"` // 触发来源（工具名）
+	Time    time.Time `json:"time"`
+	HasDiff bool      `json:"hasDiff"`
+	Diff    []DiffLine `json:"diff,omitempty"`
 }
 
 // ReviewSession 一次任务的审查会话，累积多次文件操作
@@ -40,7 +54,7 @@ func NewManager() *Manager {
 }
 
 // Snapshot 在文件被修改前捕获快照
-func (m *Manager) Snapshot(path string) {
+func (m *Manager) Snapshot(path, source string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -73,7 +87,7 @@ func (m *Manager) Snapshot(path string) {
 }
 
 // RecordChange 文件修改后记录变更
-func (m *Manager) RecordChange(path string) {
+func (m *Manager) RecordChange(path, source string) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -102,13 +116,14 @@ func (m *Manager) RecordChange(path string) {
 	}
 
 	m.session.Changes = append(m.session.Changes, FileChange{
-		Path:        path,
-		Action:      action,
-		HasSnapshot: hasSnapshot && snap.Exists,
+		Path:   path,
+		Action: action,
+		Source: source,
+		Time:   time.Now(),
 	})
 }
 
-// Review 获取当前会话的变更列表
+// Review 获取当前会话的变更列表（含来源、时间、行级 diff）
 func (m *Manager) Review() []map[string]interface{} {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -128,10 +143,43 @@ func (m *Manager) Review() []map[string]interface{} {
 		item := map[string]interface{}{
 			"path":   c.Path,
 			"action": c.Action,
+			"source": c.Source,
+			"time":   c.Time.Format("15:04:05"),
+		}
+		// 计算行级 diff
+		if diff, ok := m.computeDiff(c); ok {
+			item["hasDiff"] = true
+			item["diff"] = diff
+		} else {
+			item["hasDiff"] = false
 		}
 		result = append(result, item)
 	}
 	return result
+}
+
+// computeDiff 根据快照与当前文件内容计算行级差异
+func (m *Manager) computeDiff(c FileChange) ([]DiffLine, bool) {
+	snap, ok := m.session.Snapshots[c.Path]
+	if !ok {
+		return nil, false
+	}
+
+	var before, after []string
+	if snap.Exists {
+		before = strings.Split(string(snap.Content), "\n")
+	}
+	if c.Action != "deleted" {
+		if data, err := os.ReadFile(c.Path); err == nil {
+			after = strings.Split(string(data), "\n")
+		}
+	}
+
+	// 大文件跳过
+	if len(before)+len(after) > maxDiffLines {
+		return nil, false
+	}
+	return diffLines(before, after), true
 }
 
 // HasSession 是否有未审查的变更
@@ -249,4 +297,46 @@ func restoreFile(snap *FileSnapshot) error {
 	}
 	// 还原文件内容和权限
 	return os.WriteFile(snap.Path, snap.Content, snap.Mode)
+}
+
+// diffLines 基于行 LCS 计算差异
+func diffLines(a, b []string) []DiffLine {
+	n, m := len(a), len(b)
+	dp := make([][]int, n+1)
+	for i := range dp {
+		dp[i] = make([]int, m+1)
+	}
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if a[i] == b[j] {
+				dp[i][j] = dp[i+1][j+1] + 1
+			} else if dp[i+1][j] >= dp[i][j+1] {
+				dp[i][j] = dp[i+1][j]
+			} else {
+				dp[i][j] = dp[i][j+1]
+			}
+		}
+	}
+	var out []DiffLine
+	i, j := 0, 0
+	for i < n && j < m {
+		if a[i] == b[j] {
+			out = append(out, DiffLine{"ctx", a[i]})
+			i++
+			j++
+		} else if dp[i+1][j] >= dp[i][j+1] {
+			out = append(out, DiffLine{"del", a[i]})
+			i++
+		} else {
+			out = append(out, DiffLine{"add", b[j]})
+			j++
+		}
+	}
+	for ; i < n; i++ {
+		out = append(out, DiffLine{"del", a[i]})
+	}
+	for ; j < m; j++ {
+		out = append(out, DiffLine{"add", b[j]})
+	}
+	return out
 }
